@@ -1,14 +1,15 @@
 package com.example.wapp;
-import com.opencsv.CSVReader;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
+
+import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.client.RestTemplate;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.*;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 @RestController
@@ -16,6 +17,7 @@ import java.util.List;
 public class CsvController {
 
     private List<String[]> csvData = new ArrayList<>();
+    private final RestTemplate restTemplate = new RestTemplate();
 
     @PostMapping("/loadcsv")
     public ResponseEntity<String> loadCsv(@RequestParam("file") MultipartFile file) {
@@ -105,5 +107,60 @@ public class CsvController {
         return -1; // Column not found
     }
 
+    @GetMapping("/getTemperature")
+    public ResponseEntity<String> getTemperature(@RequestParam double latitude, @RequestParam double longitude) {
+        try {
+            // Create the NWS API URL for the point.
+            String apiUrl = "https://api.weather.gov/points/" + latitude + "," + longitude;
+
+            // Create headers with the desired format (GeoJSON).
+            HttpHeaders headers = new HttpHeaders();
+            headers.setAccept(Collections.singletonList(MediaType.valueOf("application/geo+json")));
+
+            // Create a HttpEntity with headers.
+            HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
+
+            // Send the GET request to fetch the NWS API point information.
+            ResponseEntity<String> responseEntity = restTemplate.exchange(apiUrl, HttpMethod.GET, requestEntity, String.class);
+
+            // Check the response code.
+            if (responseEntity.getStatusCode() == HttpStatus.OK) {
+                // Parse the JSON response for the point.
+                ObjectMapper objectMapper = new ObjectMapper();
+                JsonNode pointJson = objectMapper.readTree(responseEntity.getBody());
+
+                // Extract the URL for the weather forecast from the point JSON.
+                String forecastUrl = pointJson.at("/properties/forecast").asText();
+
+                // Send an HTTP GET request to the forecast URL.
+                ResponseEntity<String> forecastResponse = restTemplate.exchange(forecastUrl, HttpMethod.GET, requestEntity, String.class);
+
+                // Check the response code and parse the forecast JSON.
+                if (forecastResponse.getStatusCode() == HttpStatus.OK) {
+                    String forecastJson = forecastResponse.getBody();
+
+                    // Extract temperature and other relevant data from the forecast JSON.
+                    JsonNode temperatureNode = objectMapper.readTree(forecastJson).at("/properties/periods/0/temperature");
+                    double temperature = temperatureNode.asDouble();
+
+                    // Extract units (if available).
+                    JsonNode unitsNode = objectMapper.readTree(forecastJson).at("/properties/periods/0/temperatureUnit");
+                    String units = unitsNode.asText();
+
+                    // Prepare the response message with temperature data.
+                    String responseMessage = String.format("Current Temperature: %.1f %s", temperature, units);
+
+                    return ResponseEntity.ok(responseMessage);
+                } else {
+                    return ResponseEntity.badRequest().body("API Error: " + forecastResponse.getStatusCodeValue());
+                }
+            } else {
+                return ResponseEntity.badRequest().body("API Error: " + responseEntity.getStatusCodeValue());
+            }
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
+        }
+    }
 
 }
+
