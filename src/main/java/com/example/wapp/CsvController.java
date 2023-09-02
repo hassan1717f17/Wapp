@@ -11,6 +11,9 @@ import java.io.*;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 
 @RestController
 @RequestMapping("/csv")
@@ -147,8 +150,20 @@ public class CsvController {
                     JsonNode unitsNode = objectMapper.readTree(forecastJson).at("/properties/periods/0/temperatureUnit");
                     String units = unitsNode.asText();
 
-                    // Prepare the response message with temperature data.
-                    String responseMessage = String.format("Current Temperature: %.1f %s", temperature, units);
+                    // Extract date and time.
+                    JsonNode dateNode = objectMapper.readTree(forecastJson).at("/properties/periods/0/startTime");
+                    String startTimeStr = dateNode.asText();
+
+                    // Parse the ISO-8601 timestamp.
+                    ZonedDateTime startTime = ZonedDateTime.parse(startTimeStr);
+
+                    // Format the date and time in a more human-readable format.
+                    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z", Locale.US);
+                    String formattedTime = startTime.format(formatter);
+
+                    // Prepare the response message.
+                    String responseMessage = String.format("Date and Time: %s, Current Temperature: %.1f %s", formattedTime, temperature, units);
+
 
                     return ResponseEntity.ok(responseMessage);
                 } else {
@@ -163,4 +178,3 @@ public class CsvController {
     }
 
 }
-
