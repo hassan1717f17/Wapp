@@ -1,12 +1,13 @@
 package com.example.wapp;
 
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.web.multipart.MultipartFile;
-
 import java.io.*;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -14,10 +15,18 @@ import java.util.List;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
+import com.example.wapp.WeatherCacheManager;
 
 @RestController
 @RequestMapping("/csv")
 public class CsvController {
+
+    private WeatherCacheManager weatherCacheManager;
+
+    @Autowired
+    public void setWeatherCacheManager(@Lazy WeatherCacheManager weatherCacheManager) {
+        this.weatherCacheManager = weatherCacheManager;
+    }
 
     private List<String[]> csvData = new ArrayList<>();
     private final RestTemplate restTemplate = new RestTemplate();
@@ -51,8 +60,6 @@ public class CsvController {
         }
     }
 
-    // Implement error handling for other methods similarly
-
     @GetMapping("/viewcsv")
     public List<String[]> viewCsv() {
         if (csvData.isEmpty()) {
@@ -81,6 +88,7 @@ public class CsvController {
         return results;
     }
 
+    // Helper method to check if a row matches a query in a specific column
     private boolean matchesQuery(String[] row, String column, String query) {
         if (column == null || column.isEmpty()) {
             // Search all columns
@@ -97,21 +105,91 @@ public class CsvController {
             }
         }
         return false;
-    }
+                }
 
-    private int getColumnIndex(String columnName) {
+// Helper method to find the index of a column by name
+private int getColumnIndex(String columnName) {
         // Find the index of the specified column name in the header row (assuming the first row contains headers)
         String[] headers = csvData.get(0);
         for (int i = 0; i < headers.length; i++) {
-            if (headers[i].equalsIgnoreCase(columnName)) {
-                return i;
-            }
+        if (headers[i].equalsIgnoreCase(columnName)) {
+        return i;
+        }
         }
         return -1; // Column not found
-    }
+        }
 
-    @GetMapping("/getTemperature")
-    public ResponseEntity<String> getTemperature(@RequestParam double latitude, @RequestParam double longitude) {
+@GetMapping("/getTemperature")
+public ResponseEntity<String> getTemperature(@RequestParam double latitude, @RequestParam double longitude) {
+        try {
+        // Use the WeatherCacheManager to get weather data based on coordinates
+        ResponseEntity<String> weatherData = weatherCacheManager.getWeatherData(latitude, longitude);
+
+        if (weatherData.getStatusCode().is2xxSuccessful()) {
+        // If weather data is found in the cache, return it directly
+        return weatherData;
+        } else {
+        // If weather data is not found in the cache, fetch it from the NWS API
+               return fetchWeatherInfo(latitude, longitude);
+                }
+        } catch (Exception e) {
+        return ResponseEntity.badRequest().body("Error: " + e.getMessage());
+        }
+        }
+
+@PostMapping("/getTemperatureCSV")
+public ResponseEntity<List<String>> getTemperatureCSV(@RequestParam("file") MultipartFile file) {
+        try {
+        List<String> temperatureData = new ArrayList<>();
+
+        if (file.isEmpty()) {
+        return ResponseEntity.badRequest().body(Collections.singletonList("CSV file is empty"));
+        }
+
+        // Read the CSV content from the uploaded file
+        BufferedReader br = new BufferedReader(new InputStreamReader(file.getInputStream()));
+        String line;
+        while ((line = br.readLine()) != null) {
+        // Split the CSV line into an array
+        String[] row = line.split(",");
+        if (row.length >= 2) {
+        double latitude = Double.parseDouble(row[1]);
+        double longitude = Double.parseDouble(row[2]);
+
+        // Use the WeatherCacheManager to get weather data based on coordinates
+        ResponseEntity<String> weatherData = weatherCacheManager.getWeatherData(latitude, longitude);
+
+        if (weatherData.getStatusCode().is2xxSuccessful()) {
+        // If weather data is found in the cache, add it to the response list
+        temperatureData.add(weatherData.getBody());
+        } else {
+        // If weather data is not found in the cache, fetch it from the NWS API
+        ResponseEntity<String> weatherInfoResponse = fetchWeatherInfo(latitude, longitude);
+
+        if (weatherInfoResponse.getStatusCode().is2xxSuccessful()) {
+        // Add the weather info to the response list
+        temperatureData.add(weatherInfoResponse.getBody());
+
+        // Cache the weather data for future use
+        weatherCacheManager.cacheWeatherData(latitude, longitude, weatherInfoResponse);
+               } else {
+        // Handle the case where fetching data fails
+        temperatureData.add("API Error: " + weatherInfoResponse.getStatusCodeValue());
+                             }
+                     }
+              }
+        }
+
+        return ResponseEntity.ok(temperatureData);
+        } catch (IOException e) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Collections.singletonList("Failed to read the CSV file"));
+    } catch (Exception e) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Collections.singletonList("An unexpected error occurred"));
+    }
+}
+
+    // Helper method to fetch weather information from the NWS API
+    private ResponseEntity<String> fetchWeatherInfo(double latitude, double longitude) {
         try {
             // Create the NWS API URL for the point.
             String apiUrl = "https://api.weather.gov/points/" + latitude + "," + longitude;
@@ -160,11 +238,10 @@ public class CsvController {
                     // Format the date and time in a more human-readable format.
                     DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z", Locale.US);
                     String formattedTime = startTime.format(formatter);
-
                     // Prepare the response message.
                     String responseMessage = String.format("Date and Time: %s, Current Temperature: %.1f %s", formattedTime, temperature, units);
 
-
+                    // Return the weather information as a successful response
                     return ResponseEntity.ok(responseMessage);
                 } else {
                     return ResponseEntity.badRequest().body("API Error: " + forecastResponse.getStatusCodeValue());
@@ -176,5 +253,10 @@ public class CsvController {
             return ResponseEntity.badRequest().body("Error: " + e.getMessage());
         }
     }
-
 }
+
+
+
+
+
+
