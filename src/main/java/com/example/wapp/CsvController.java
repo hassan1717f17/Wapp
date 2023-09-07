@@ -8,6 +8,7 @@ import org.springframework.web.client.RestTemplate;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.web.multipart.MultipartFile;
+
 import java.io.*;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -15,7 +16,6 @@ import java.util.List;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
-import com.example.wapp.WeatherCacheManager;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,7 +25,8 @@ import org.slf4j.LoggerFactory;
 public class CsvController {
 
     private WeatherCacheManager weatherCacheManager;
-    private final Logger logger = LoggerFactory.getLogger(getClass());
+
+    private static final Logger logger = LoggerFactory.getLogger(WeatherCacheManager.class);
 
     @Autowired
     public void setWeatherCacheManager(@Lazy WeatherCacheManager weatherCacheManager) {
@@ -48,6 +49,28 @@ public class CsvController {
             // Read the CSV content from the uploaded file
             BufferedReader br = new BufferedReader(new InputStreamReader(file.getInputStream()));
             String line;
+
+            // Read the header row to determine column indices
+            String headerLine = br.readLine();
+            String[] headers = headerLine.split(",");
+
+            int latitudeIndex = -1;
+            int longitudeIndex = -1;
+
+            // Find the columns containing latitude and longitude
+            for (int i = 0; i < headers.length; i++) {
+                if (headers[i].equalsIgnoreCase("latitude")) {
+                    latitudeIndex = i;
+                } else if (headers[i].equalsIgnoreCase("longitude")) {
+                    longitudeIndex = i;
+                }
+            }
+
+            if (latitudeIndex == -1 || longitudeIndex == -1) {
+                // Latitude and/or longitude columns not found
+                return ResponseEntity.badRequest().body("Latitude and/or longitude columns not found in CSV.");
+            }
+
             while ((line = br.readLine()) != null) {
                 // Split the CSV line into an array
                 String[] row = line.split(",");
@@ -65,11 +88,11 @@ public class CsvController {
     }
 
     @GetMapping("/viewcsv")
-    public List<String[]> viewCsv() {
+    public ResponseEntity<List<String[]>> viewCsv() {
         if (csvData.isEmpty()) {
-            throw new RuntimeException("CSV data is empty. Load a CSV file first.");
+            return ResponseEntity.badRequest().body(Collections.singletonList(new String[]{"CSV data is empty. Load a CSV file first."}));
         }
-        return csvData;
+        return ResponseEntity.ok(csvData);
     }
 
     @GetMapping("/searchcsv")
@@ -109,111 +132,88 @@ public class CsvController {
             }
         }
         return false;
-                }
+    }
 
-// Helper method to find the index of a column by name
-private int getColumnIndex(String columnName) {
+    // Helper method to find the index of a column by name
+    private int getColumnIndex(String columnName) {
         // Find the index of the specified column name in the header row (assuming the first row contains headers)
         String[] headers = csvData.get(0);
         for (int i = 0; i < headers.length; i++) {
-        if (headers[i].equalsIgnoreCase(columnName)) {
-        return i;
-        }
-        }
-        return -1; // Column not found
-        }
-
-@GetMapping("/getTemperature")
-public ResponseEntity<String> getTemperature(@RequestParam double latitude, @RequestParam double longitude) {
-        try {
-        // Use the WeatherCacheManager to get weather data based on coordinates
-        ResponseEntity<String> weatherData = weatherCacheManager.getWeatherData(latitude, longitude);
-
-        if (weatherData.getStatusCode().is2xxSuccessful()) {
-        // If weather data is found in the cache, return it directly
-        return weatherData;
-        } else {
-        // If weather data is not found in the cache, fetch it from the NWS API
-               return fetchWeatherInfo(latitude, longitude);
-                }
-        } catch (Exception e) {
-        return ResponseEntity.badRequest().body("Error: " + e.getMessage());
-        }
-        }
-
-@PostMapping("/getTemperatureCSV")
-public ResponseEntity<List<String>> getTemperatureCSV(@RequestParam("file") MultipartFile file) {
-    try {
-        List<String> temperatureData = new ArrayList<>();
-
-        if (file.isEmpty()) {
-            return ResponseEntity.badRequest().body(Collections.singletonList("CSV file is empty"));
-        }
-
-        // Read the CSV content from the uploaded file
-        BufferedReader br = new BufferedReader(new InputStreamReader(file.getInputStream()));
-        String line;
-
-        // Read the header row to determine column indices
-        String headerLine = br.readLine();
-        String[] headers = headerLine.split(",");
-
-        int latitudeIndex = -1;
-        int longitudeIndex = -1;
-
-        // Find the columns containing latitude and longitude
-        for (int i = 0; i < headers.length; i++) {
-            if (headers[i].equalsIgnoreCase("latitude")) {
-                latitudeIndex = i;
-            } else if (headers[i].equalsIgnoreCase("longitude")) {
-                longitudeIndex = i;
+            if (headers[i].equalsIgnoreCase(columnName)) {
+                return i;
             }
         }
+        return -1; // Column not found
+    }
 
-        if (latitudeIndex == -1 || longitudeIndex == -1) {
-            // Latitude and/or longitude columns not found
-            return ResponseEntity.badRequest().body(Collections.singletonList("Latitude and/or longitude columns not found in CSV."));
+    @GetMapping("/getTemperature")
+    public ResponseEntity<String> getTemperature(@RequestParam double latitude, @RequestParam double longitude) {
+        try {
+            // Use the WeatherCacheManager to get weather data based on coordinates
+            ResponseEntity<String> weatherData = weatherCacheManager.getWeatherData(latitude, longitude);
+
+            if (weatherData.getStatusCode().is2xxSuccessful()) {
+                // If weather data is found in the cache, return it directly
+                return weatherData;
+            } else {
+                // If weather data is not found in the cache, fetch it from the NWS API
+                return fetchWeatherInfo(latitude, longitude);
+            }
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
         }
+    }
 
-        while ((line = br.readLine()) != null) {
-            // Split the CSV line into an array
-            String[] row = line.split(",");
+    @GetMapping("/getTemperatureFromCSV")
+    public ResponseEntity<List<String>> getTemperatureFromCSV() {
+        try {
+            List<String> temperatureData = new ArrayList<>();
 
-            if (row.length > Math.max(latitudeIndex, longitudeIndex)) {
-                double latitude = Double.parseDouble(row[latitudeIndex]);
-                double longitude = Double.parseDouble(row[longitudeIndex]);
+            if (csvData.isEmpty()) {
+                return ResponseEntity.badRequest().body(Collections.singletonList("CSV data is empty. Load a CSV file first."));
+            }
 
-                // Use the WeatherCacheManager to get weather data based on coordinates
-                ResponseEntity<String> weatherData = weatherCacheManager.getWeatherData(latitude, longitude);
+            // Iterate through all rows, including the header row at i = 0
+            for (int i = 0; i < csvData.size(); i++) {
+                String[] row = csvData.get(i);
 
-                if (weatherData.getStatusCode().is2xxSuccessful()) {
-                    // If weather data is found in the cache, add it to the response list
-                    temperatureData.add(weatherData.getBody());
-                } else {
-                    // If weather data is not found in the cache, fetch it from the NWS API
-                    ResponseEntity<String> weatherInfoResponse = fetchWeatherInfo(latitude, longitude);
+                if (row.length >= 2) {
+                    double latitude = Double.parseDouble(row[1]);
+                    double longitude = Double.parseDouble(row[2]);
 
-                    if (weatherInfoResponse.getStatusCode().is2xxSuccessful()) {
-                        // Add the weather info to the response list
-                        temperatureData.add(weatherInfoResponse.getBody());
+                    // Use the WeatherCacheManager to get weather data based on coordinates
+                    ResponseEntity<String> weatherData = weatherCacheManager.getWeatherData(latitude, longitude);
 
-                        // Cache the weather data for future use
-                        weatherCacheManager.cacheWeatherData(latitude, longitude, weatherInfoResponse);
+                    if (weatherData.getStatusCode().is2xxSuccessful()) {
+                        // If weather data is found in the cache, add it to the response list
+                        temperatureData.add(weatherData.getBody());
                     } else {
-                        // Handle the case where fetching data fails
-                        temperatureData.add("API Error: " + weatherInfoResponse.getStatusCodeValue());
+                        // If weather data is not found in the cache, fetch it from the NWS API
+                        ResponseEntity<String> weatherInfoResponse = fetchWeatherInfo(latitude, longitude);
+
+                        if (weatherInfoResponse.getStatusCode().is2xxSuccessful()) {
+                            // Add the weather info to the response list
+                            temperatureData.add(weatherInfoResponse.getBody());
+
+                            // Cache the weather data for future use
+                            weatherCacheManager.cacheWeatherData(latitude, longitude, weatherInfoResponse);
+                        } else {
+                            // Handle the case where fetching data fails
+                            temperatureData.add("API Error: " + weatherInfoResponse.getStatusCodeValue());
+                        }
                     }
                 }
             }
-        }
 
-        return ResponseEntity.ok(temperatureData);
-    } catch (IOException e) {
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Collections.singletonList("Failed to read the CSV file"));
-    } catch (Exception e) {
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Collections.singletonList("An unexpected error occurred"));
+            return ResponseEntity.ok(temperatureData);
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Collections.singletonList("An unexpected error occurred"));
+        }
     }
-}
+
+
+
+
 
     // Helper method to fetch weather information from the NWS API
     private ResponseEntity<String> fetchWeatherInfo(double latitude, double longitude) {
