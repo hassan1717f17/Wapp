@@ -50,27 +50,6 @@ public class CsvController {
             BufferedReader br = new BufferedReader(new InputStreamReader(file.getInputStream()));
             String line;
 
-            // Read the header row to determine column indices
-            String headerLine = br.readLine();
-            String[] headers = headerLine.split(",");
-
-            int latitudeIndex = -1;
-            int longitudeIndex = -1;
-
-            // Find the columns containing latitude and longitude
-            for (int i = 0; i < headers.length; i++) {
-                if (headers[i].equalsIgnoreCase("latitude")) {
-                    latitudeIndex = i;
-                } else if (headers[i].equalsIgnoreCase("longitude")) {
-                    longitudeIndex = i;
-                }
-            }
-
-            if (latitudeIndex == -1 || longitudeIndex == -1) {
-                // Latitude and/or longitude columns not found
-                return ResponseEntity.badRequest().body("Latitude and/or longitude columns not found in CSV.");
-            }
-
             while ((line = br.readLine()) != null) {
                 // Split the CSV line into an array
                 String[] row = line.split(",");
@@ -173,8 +152,8 @@ public class CsvController {
                 return ResponseEntity.badRequest().body(Collections.singletonList("CSV data is empty. Load a CSV file first."));
             }
 
-            // Iterate through all rows, including the header row at i = 0
-            for (int i = 0; i < csvData.size(); i++) {
+            // Skip the first row, which contains headers
+            for (int i = 1; i < csvData.size(); i++) {
                 String[] row = csvData.get(i);
 
                 if (row.length >= 2) {
@@ -210,7 +189,6 @@ public class CsvController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Collections.singletonList("An unexpected error occurred"));
         }
     }
-
 
 
 
