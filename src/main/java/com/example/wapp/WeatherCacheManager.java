@@ -9,6 +9,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.concurrent.TimeUnit;
 @Component
 public class WeatherCacheManager {
@@ -17,6 +20,10 @@ public class WeatherCacheManager {
 
     private final LoadingCache<String, ResponseEntity<String>> weatherCache;
     private final CsvController csvController;
+
+
+    private static final Logger logger = LoggerFactory.getLogger(WeatherCacheManager.class);
+
 
     public WeatherCacheManager(@Lazy CsvController csvController) {
         this.csvController = csvController;
@@ -43,26 +50,15 @@ public class WeatherCacheManager {
         double latitude = parseLatitudeFromKey(key);
         double longitude = parseLongitudeFromKey(key);
 
-        // Check if weather data is available in the cache
-        ResponseEntity<String> cachedResponse = getWeatherData(latitude, longitude);
+        ResponseEntity<String> response = csvController.getTemperature(latitude, longitude);
 
-        if (cachedResponse.getStatusCode().is2xxSuccessful()) {
-            // If data is found in the cache, return it
-            return cachedResponse;
+        if (response.getStatusCode().is2xxSuccessful()) {
+            logger.info("Weather data fetched successfully for key: {}", key);
+            cacheWeatherData(latitude, longitude, response);
+            return response;
         } else {
-            // If not found in cache, fetch data from the API
-            ResponseEntity<String> response = csvController.getTemperature(latitude, longitude);
-
-            // Check if the response is successful (2xx status code)
-            if (response.getStatusCode().is2xxSuccessful()) {
-                // Cache the weather data for future use
-                cacheWeatherData(latitude, longitude, response);
-
-                return response; // Weather data fetched successfully
-            } else {
-                // Handle the case where fetching data fails
-                throw new RuntimeException("Failed to fetch weather data");
-            }
+            logger.error("API Error: Failed to fetch weather data for key: {}, Status Code: {}", key, response.getStatusCodeValue());
+            return ResponseEntity.badRequest().body("API Error: " + response.getStatusCodeValue());
         }
     }
 
@@ -88,9 +84,17 @@ public class WeatherCacheManager {
     public ResponseEntity<String> getWeatherData(double latitude, double longitude) {
         String cacheKey = createCacheKey(latitude, longitude);
         try {
-            return weatherCache.get(cacheKey);
+            ResponseEntity<String> cachedResponse = weatherCache.get(cacheKey);
+            if (cachedResponse != null) {
+                logger.info("Weather data found in cache for key: {}", cacheKey);
+                return cachedResponse;
+            } else {
+                ResponseEntity<String> response = fetchWeatherData(cacheKey);
+                logger.info("Fetching weather data for key: {}", cacheKey);
+                return response;
+            }
         } catch (Exception e) {
-            // Handle cache-related exceptions or errors
+            logger.error("Error fetching weather data from cache for key: {}", cacheKey, e);
             throw new RuntimeException("Error fetching weather data from cache", e);
         }
     }

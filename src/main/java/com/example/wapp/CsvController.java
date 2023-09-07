@@ -17,11 +17,15 @@ import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import com.example.wapp.WeatherCacheManager;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 @RestController
 @RequestMapping("/csv")
 public class CsvController {
 
     private WeatherCacheManager weatherCacheManager;
+    private final Logger logger = LoggerFactory.getLogger(getClass());
 
     @Autowired
     public void setWeatherCacheManager(@Lazy WeatherCacheManager weatherCacheManager) {
@@ -139,49 +143,72 @@ public ResponseEntity<String> getTemperature(@RequestParam double latitude, @Req
 
 @PostMapping("/getTemperatureCSV")
 public ResponseEntity<List<String>> getTemperatureCSV(@RequestParam("file") MultipartFile file) {
-        try {
+    try {
         List<String> temperatureData = new ArrayList<>();
 
         if (file.isEmpty()) {
-        return ResponseEntity.badRequest().body(Collections.singletonList("CSV file is empty"));
+            return ResponseEntity.badRequest().body(Collections.singletonList("CSV file is empty"));
         }
 
         // Read the CSV content from the uploaded file
         BufferedReader br = new BufferedReader(new InputStreamReader(file.getInputStream()));
         String line;
+
+        // Read the header row to determine column indices
+        String headerLine = br.readLine();
+        String[] headers = headerLine.split(",");
+
+        int latitudeIndex = -1;
+        int longitudeIndex = -1;
+
+        // Find the columns containing latitude and longitude
+        for (int i = 0; i < headers.length; i++) {
+            if (headers[i].equalsIgnoreCase("latitude")) {
+                latitudeIndex = i;
+            } else if (headers[i].equalsIgnoreCase("longitude")) {
+                longitudeIndex = i;
+            }
+        }
+
+        if (latitudeIndex == -1 || longitudeIndex == -1) {
+            // Latitude and/or longitude columns not found
+            return ResponseEntity.badRequest().body(Collections.singletonList("Latitude and/or longitude columns not found in CSV."));
+        }
+
         while ((line = br.readLine()) != null) {
-        // Split the CSV line into an array
-        String[] row = line.split(",");
-        if (row.length >= 2) {
-        double latitude = Double.parseDouble(row[1]);
-        double longitude = Double.parseDouble(row[2]);
+            // Split the CSV line into an array
+            String[] row = line.split(",");
 
-        // Use the WeatherCacheManager to get weather data based on coordinates
-        ResponseEntity<String> weatherData = weatherCacheManager.getWeatherData(latitude, longitude);
+            if (row.length > Math.max(latitudeIndex, longitudeIndex)) {
+                double latitude = Double.parseDouble(row[latitudeIndex]);
+                double longitude = Double.parseDouble(row[longitudeIndex]);
 
-        if (weatherData.getStatusCode().is2xxSuccessful()) {
-        // If weather data is found in the cache, add it to the response list
-        temperatureData.add(weatherData.getBody());
-        } else {
-        // If weather data is not found in the cache, fetch it from the NWS API
-        ResponseEntity<String> weatherInfoResponse = fetchWeatherInfo(latitude, longitude);
+                // Use the WeatherCacheManager to get weather data based on coordinates
+                ResponseEntity<String> weatherData = weatherCacheManager.getWeatherData(latitude, longitude);
 
-        if (weatherInfoResponse.getStatusCode().is2xxSuccessful()) {
-        // Add the weather info to the response list
-        temperatureData.add(weatherInfoResponse.getBody());
+                if (weatherData.getStatusCode().is2xxSuccessful()) {
+                    // If weather data is found in the cache, add it to the response list
+                    temperatureData.add(weatherData.getBody());
+                } else {
+                    // If weather data is not found in the cache, fetch it from the NWS API
+                    ResponseEntity<String> weatherInfoResponse = fetchWeatherInfo(latitude, longitude);
 
-        // Cache the weather data for future use
-        weatherCacheManager.cacheWeatherData(latitude, longitude, weatherInfoResponse);
-               } else {
-        // Handle the case where fetching data fails
-        temperatureData.add("API Error: " + weatherInfoResponse.getStatusCodeValue());
-                             }
-                     }
-              }
+                    if (weatherInfoResponse.getStatusCode().is2xxSuccessful()) {
+                        // Add the weather info to the response list
+                        temperatureData.add(weatherInfoResponse.getBody());
+
+                        // Cache the weather data for future use
+                        weatherCacheManager.cacheWeatherData(latitude, longitude, weatherInfoResponse);
+                    } else {
+                        // Handle the case where fetching data fails
+                        temperatureData.add("API Error: " + weatherInfoResponse.getStatusCodeValue());
+                    }
+                }
+            }
         }
 
         return ResponseEntity.ok(temperatureData);
-        } catch (IOException e) {
+    } catch (IOException e) {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Collections.singletonList("Failed to read the CSV file"));
     } catch (Exception e) {
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Collections.singletonList("An unexpected error occurred"));
